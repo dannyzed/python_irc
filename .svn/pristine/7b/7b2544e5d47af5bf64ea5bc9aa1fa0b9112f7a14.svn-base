@@ -1,0 +1,158 @@
+import handler
+
+# handler for a simple pugbot
+class PugHandler(handler.Handler):
+    # set some defaults
+    def __init__(self):
+        self.maxplayers = 10
+        self.captlist = []
+        self.curplayers = []
+        self.pickplayers = []
+        self.pickcount = 0
+        self.redteam = []
+        self.blueteam = []
+        self.turnpick = 0
+        self.channel = '#ua'
+        self.mode = 'playerjoin'
+        # defines handler functions for various commands
+        self.funclist = {'join': self.fun_join, 'list': self.fun_list, 'leave': self.fun_leave, 'addplayer': self.fun_addplayer, 'delplayer': self.fun_delplayer, 'part': self.fun_leave, 'captain': self.fun_captain, 'pick': self.fun_pick, 'teams': self.fun_teams}
+
+    # function is called whenever a new command is received
+    def execute(self,command):
+        if command:
+            # get the right function to process the command
+            if command['cmd'] != '':
+                handle_func = self.funclist.get(command['cmd'].lower(), self.default)
+                # call it
+                handle_func(command)
+            else:
+                # theres a special case of when someone joins the channel we dont want them joining
+                # the pug
+                if command['irccmd'] != 'JOIN':
+                    handle_func = self.funclist.get(command['irccmd'].lower(), self.default)
+                    handle_func(command)
+
+
+    # handles the .join command for players
+    def fun_join(self,command):
+        self.add_player(command['name'])
+
+    # internal function to check if we can add a player
+    def add_player(self, name):
+        if len(self.curplayers) < self.maxplayers and self.curplayers.count(name.lower()) == 0:
+            self.curplayers.append(name.lower())
+            if len(self.curplayers) == self.maxplayers:
+                self.mode = 'captainpick'
+                self.enter_captain_pick()
+
+    def del_player(self, name):
+        if self.mode == 'mappick':
+            return
+        if self.curplayers.count(name.lower()) != 0:
+            self.curplayers.remove(name.lower())
+            if mode == 'captainpick' or mode == 'playerpick':
+                self.enter_player_join()
+                mode = 'playerjoin'
+
+    # handles the .list command
+    def fun_list(self,command):
+        msg = ''
+        if self.mode == 'playerjoin':
+            for names in self.curplayers:
+                msg = msg + ' ' + names
+            self.irc_connection.send_privmsg(msg, self.channel)
+        if self.mode == 'playerpick':
+            for names in self.pickplayers:
+                msg = msg + ' ' + names
+            self.irc_connection.send_privmsg(msg, self.channel)
+    
+    # handles the .leave command
+    def fun_leave(self,command):
+        self.del_player(command['name'])
+    
+    # handles the .addplayer command
+    def fun_addplayer(self, command):
+        self.add_player(command['arg'])
+
+    # handles the .delplayer command
+    def fun_delplayer(self, command):
+        self.del_player(command['arg'])
+
+    def enter_captain_pick(self):
+        msg = "Entering captain pick mode type .captain to be a captain, Current Player List:"
+        self.irc_connection.send_privmsg(msg, self.channel)
+        self.fun_list([])
+
+    def fun_captain(self,command):
+        if self.mode == 'captainpick':
+            if self.curplayers.count(command['name'].lower()) != 0 and self.captlist.count(command['name'].lower()) == 0:
+                msg = "Thank you for volunteering to be a captain"
+                self.irc_connection.send_privmsg(msg,self.channel)
+                self.captlist.append(command['name'].lower())
+                if len(self.captlist) == 2:
+                    self.mode = 'playerpick'
+                    self.enter_player_pick()
+                    self.blueteam.append(command['name'])
+                else:
+                    self.redteam.append(command['name'])
+
+    def fun_pick(self,command):
+
+        if self.mode == 'playerpick':
+            if self.captlist[self.turnpick].lower() != command['name'].lower():
+                return
+            pickname = command['arg']
+            try:
+                h = self.captlist.index(command['name'].lower())
+            except ValueError:
+                h = -1
+            if h != -1:
+                try:
+                    h2 = self.pickplayers.index(pickname.lower())
+                except ValueError:
+                    h2 = -1
+                if h2 != -1:
+                    if h == 0:
+                        self.redteam.append(self.pickplayers[h2])
+                    else:
+                        self.blueteam.append(self.pickplayers[h2])
+                    self.pickplayers.remove(pickname.lower())
+                    self.pickcount += 1
+                    self.turnpick = (1 + (self.pickcount+1)/2) % 2
+                    if self.pickcount == self.maxplayers - 1:
+                        if self.turnpick == 0:
+                            self.redteam.append(self.pickplayers[0])
+                        else:
+                            self.blueteam.append(self.pickplayers[0])
+                        self.print_teams()
+                        self.mode = 'mappick'
+                    else:
+                        self.print_teams()
+
+    def fun_teams(self,command):
+        self.print_teams()
+
+    def print_teams(self):
+        redteam = 'Red Team:'
+        blueteam = 'Blue Team:'
+        for names in self.redteam:
+            redteam += names + ' '
+        for names in self.blueteam:
+            blueteam += names + ' '
+        self.irc_connection.send_privmsg(redteam, self.channel)
+        self.irc_connection.send_privmsg(blueteam, self.channel)
+
+    def enter_player_pick(self):
+        self.pickplayers = self.curplayers
+        self.pickplayers.remove(self.captlist[0])
+        self.pickplayers.remove(self.captlist[1])
+        self.turnpick = 0
+        self.pickcount = 2
+
+    def enter_player_join(self):
+        self.captlist = []
+        self.redteam = []
+        self.blueteam = []
+
+    def default(self,command):
+        pass
